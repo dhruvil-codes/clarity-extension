@@ -622,7 +622,6 @@
       </svg>
     </div>
     <span class="logo-name">Clarity</span>
-    <span class="logo-tag">AI</span>
   </div>
   <div class="topbar-right">
     <!-- History button -->
@@ -652,11 +651,39 @@
 <!-- SETTINGS PANEL -->
 <div id="settings-panel">
   <div class="settings-title">Configuration</div>
-  <div style="margin-bottom:12px;">
-    <div class="setting-label">OpenAI API Key</div>
-    <div class="setting-sub">Stored locally, never sent elsewhere.</div>
-    <input class="api-input" id="api-key-input" type="password" placeholder="sk-proj-..."/>
+
+  <!-- Provider -->
+  <div style="margin-bottom:10px;">
+    <div class="setting-label">AI Provider</div>
+    <select class="api-input" id="provider-select" style="margin-top:6px;cursor:pointer;">
+      <option value="openai">OpenAI</option>
+      <option value="claude">Claude (Anthropic)</option>
+      <option value="gemini">Gemini (Google)</option>
+    </select>
   </div>
+
+  <!-- Model -->
+  <div style="margin-bottom:10px;">
+    <div class="setting-label">Model</div>
+    <select class="api-input" id="model-select" style="margin-top:6px;cursor:pointer;"></select>
+  </div>
+
+  <!-- Free model disclaimer — hidden, kept for future use -->
+  <div id="free-disclaimer" style="display:none;"></div>
+
+  <!-- API Key -->
+  <div style="margin-bottom:12px;">
+    <div class="setting-label">API Key</div>
+    <div class="setting-sub">Stored locally on your device only.</div>
+    <input class="api-input" id="api-key-input" type="password" placeholder="sk-..."/>
+  </div>
+
+  <!-- Zero-server badge -->
+  <div style="display:flex;align-items:center;gap:7px;background:#f0f7f0;border:1px solid #c8e6c8;border-radius:8px;padding:8px 10px;margin-bottom:12px;">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2a7a2a" stroke-width="2" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    <span style="font-size:11px;color:#2a5a2a;line-height:1.5;font-family:'Geist',sans-serif;">Your data goes directly to your AI provider. Clarity never sees it.</span>
+  </div>
+
   <div class="setting-row">
     <div>
       <div class="setting-label">Show Tone Analysis</div>
@@ -714,7 +741,7 @@
     <div class="loader-ring"></div>
     <div class="loading-steps">
       <div class="loading-step active">→ Extracting article content...</div>
-      <div class="loading-step">→ Analyzing with OpenAI...</div>
+      <div class="loading-step">→ Sending to AI provider...</div>
       <div class="loading-step">→ Structuring your summary...</div>
     </div>
   </div>

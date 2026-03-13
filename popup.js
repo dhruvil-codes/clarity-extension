@@ -1,13 +1,79 @@
+// ── PROVIDER CONFIG ──
+const PROVIDERS = {
+  openai: {
+    name: 'OpenAI',
+    defaultModel: 'gpt-4o-mini',
+    models: [
+      { id: 'gpt-4o-mini', label: 'GPT-4o Mini (recommended)' },
+      { id: 'gpt-4o',      label: 'GPT-4o (best quality)' },
+    ],
+    keyPlaceholder: 'sk-proj-...',
+    buildRequest(key, model, sys, user) {
+      return {
+        url: 'https://api.openai.com/v1/chat/completions',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        body: { model, max_tokens: 1200, messages: [{ role:'system', content: sys }, { role:'user', content: user }] }
+      };
+    },
+    parseResponse: d => d.choices[0].message.content
+  },
+  claude: {
+    name: 'Claude (Anthropic)',
+    defaultModel: 'claude-haiku-4-5-20251001',
+    models: [
+      { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku (recommended)' },
+      { id: 'claude-sonnet-4-6',         label: 'Claude Sonnet (best quality)' },
+    ],
+    keyPlaceholder: 'sk-ant-api03-...',
+    buildRequest(key, model, sys, user) {
+      return {
+        url: 'https://api.anthropic.com/v1/messages',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: { model, max_tokens: 1200, system: sys, messages: [{ role:'user', content: user }] }
+      };
+    },
+    parseResponse: d => d.content[0].text
+  },
+  gemini: {
+    name: 'Gemini (Google)',
+    defaultModel: 'gemini-2.5-flash',
+    models: [
+      { id: 'gemini-2.5-flash',        label: 'Gemini 2.5 Flash (recommended)' },
+      { id: 'gemini-2.5-pro',          label: 'Gemini 2.5 Pro (best quality)' },
+      { id: 'gemini-2.5-flash-lite',   label: 'Gemini 2.5 Flash-Lite (fastest)' },
+      { id: 'gemini-2.0-flash',        label: 'Gemini 2.0 Flash' },
+      { id: 'gemini-2.0-flash-lite',   label: 'Gemini 2.0 Flash-Lite' },
+      { id: 'gemini-flash-latest',     label: 'Gemini Flash Latest' },
+      { id: 'gemini-pro-latest',       label: 'Gemini Pro Latest' },
+      { id: 'gemma-3-27b-it',          label: 'Gemma 3 27B' },
+      { id: 'gemma-3-12b-it',          label: 'Gemma 3 12B' },
+      { id: 'gemma-3-4b-it',           label: 'Gemma 3 4B' },
+    ],
+    keyPlaceholder: 'AIza...',
+    buildRequest(key, model, sys, user) {
+      return {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+        headers: { 'Content-Type': 'application/json' },
+        body: { contents: [{ parts: [{ text: `${sys}\n\n${user}` }] }] }
+      };
+    },
+    parseResponse: d => d.candidates[0].content.parts[0].text
+  }
+};
+
 // ── STATE ──
-let articleText = '';
+let articleText  = '';
 let articleTitle = '';
 let articleUrl   = '';
 let currentData  = null;
 let settings = {
-  showTone: true,
-  showEntities: true,
-  showReadTime: true,
-  apiKey: ''
+  showTone: true, showEntities: true, showReadTime: true,
+  provider: 'openai', model: 'gpt-4o-mini', apiKey: ''
 };
 
 // ── DOM refs ──
@@ -20,16 +86,60 @@ const historyPanel = document.getElementById('history-panel');
 
 // ── LOAD SETTINGS ──
 chrome.storage.sync.get(['claritySettings'], (res) => {
-  if (res.claritySettings) {
-    settings = { ...settings, ...res.claritySettings };
-    document.getElementById('api-key-input').value = settings.apiKey || '';
-    document.getElementById('toggle-tone').checked = settings.showTone;
-    document.getElementById('toggle-entities').checked = settings.showEntities;
-    document.getElementById('toggle-readtime').checked = settings.showReadTime;
-  }
+  if (res.claritySettings) settings = { ...settings, ...res.claritySettings };
+  populateSettingsUI();
 });
 
-// ── SETTINGS TOGGLE ──
+async function populateSettingsUI() {
+  const providerSel = document.getElementById('provider-select');
+  providerSel.value = settings.provider || 'openai';
+  updateKeyPlaceholder(settings.provider);
+  updateFreeDisclaimer(settings.model);
+  document.getElementById('api-key-input').value      = settings.apiKey || '';
+  document.getElementById('toggle-tone').checked      = settings.showTone;
+  document.getElementById('toggle-entities').checked  = settings.showEntities;
+  document.getElementById('toggle-readtime').checked  = settings.showReadTime;
+  rebuildModelDropdown(settings.provider, settings.model);
+}
+
+// ── PROVIDER / MODEL DROPDOWNS ──
+document.getElementById('provider-select').addEventListener('change', e => {
+  const p = e.target.value;
+  settings.provider = p;
+  settings.model    = PROVIDERS[p].defaultModel;
+  updateKeyPlaceholder(p);
+  updateFreeDisclaimer(settings.model);
+  rebuildModelDropdown(p, settings.model);
+});
+
+document.getElementById('model-select').addEventListener('change', e => {
+  settings.model = e.target.value;
+  updateFreeDisclaimer(settings.model);
+});
+
+function rebuildModelDropdown(provider, selectedModel) {
+  const sel = document.getElementById('model-select');
+  sel.innerHTML = '';
+  (PROVIDERS[provider]?.models || []).forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.label;
+    if (m.id === selectedModel) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (!sel.value && sel.options.length > 0) sel.selectedIndex = 0;
+}
+
+function updateKeyPlaceholder(provider) {
+  document.getElementById('api-key-input').placeholder = PROVIDERS[provider]?.keyPlaceholder || 'API Key...';
+}
+
+function updateFreeDisclaimer(model) {
+  const show = model && model.includes(':free');
+  document.getElementById('free-disclaimer').style.display = show ? 'flex' : 'none';
+}
+
+// ── SETTINGS PANEL TOGGLE ──
 document.getElementById('settings-toggle').addEventListener('click', () => {
   historyPanel.style.display = 'none';
   settingsPanel.style.display = settingsPanel.style.display === 'block' ? 'none' : 'block';
@@ -37,6 +147,8 @@ document.getElementById('settings-toggle').addEventListener('click', () => {
 
 document.getElementById('save-settings').addEventListener('click', () => {
   settings.apiKey       = document.getElementById('api-key-input').value.trim();
+  settings.provider     = document.getElementById('provider-select').value;
+  settings.model        = document.getElementById('model-select').value;
   settings.showTone     = document.getElementById('toggle-tone').checked;
   settings.showEntities = document.getElementById('toggle-entities').checked;
   settings.showReadTime = document.getElementById('toggle-readtime').checked;
@@ -57,9 +169,7 @@ document.getElementById('history-toggle').addEventListener('click', () => {
 });
 
 document.getElementById('history-clear').addEventListener('click', () => {
-  chrome.storage.local.set({ clarityHistory: [] }, () => {
-    renderHistory();
-  });
+  chrome.storage.local.set({ clarityHistory: [] }, () => renderHistory());
 });
 
 // ── SUMMARIZE ──
@@ -69,21 +179,19 @@ document.getElementById('redo-btn').addEventListener('click', () => showState('i
 async function summarize() {
   hideError();
   showState('loading');
-
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const response = await chrome.tabs.sendMessage(tab.id, { action: 'getPageText' });
-    articleText  = response.text;
-    articleTitle = response.title;
+    const [tab]  = await chrome.tabs.query({ active: true, currentWindow: true });
+    const resp   = await chrome.tabs.sendMessage(tab.id, { action: 'getPageText' });
+    articleText  = resp.text;
+    articleTitle = resp.title;
     articleUrl   = tab.url;
 
-    const readTime = Math.ceil(articleText.split(' ').length / 200);
+    const readTime   = Math.ceil(articleText.split(' ').length / 200);
     const userPrompt = `Article title: ${articleTitle}\n\nArticle content:\n${articleText.slice(0, 8000)}`;
-
-    const rawJson = await callAI(userPrompt);
-    const cleaned = rawJson.trim().replace(/^```json|^```|```$/gm, '').trim();
-    const data = JSON.parse(cleaned);
-    currentData = data;
+    const rawJson    = await callAI(userPrompt);
+    const cleaned    = rawJson.trim().replace(/^```json|^```|```$/gm, '').trim();
+    const data       = JSON.parse(cleaned);
+    currentData      = data;
 
     renderResult(data, readTime);
     saveToHistory(data);
@@ -98,11 +206,9 @@ async function summarize() {
 function renderResult(data, readTime) {
   document.getElementById('tldr-text').textContent = data.tldr;
 
-  // Tags row
   const tagsRow = document.getElementById('tags-row');
   tagsRow.innerHTML = '';
-  const tags = data.tags || [];
-  tags.forEach(tag => {
+  (data.tags || []).forEach(tag => {
     const chip = document.createElement('span');
     chip.className = 'tag-chip';
     chip.textContent = tag.startsWith('#') ? tag : `#${tag}`;
@@ -110,55 +216,44 @@ function renderResult(data, readTime) {
     tagsRow.appendChild(chip);
   });
 
-  // Meta badges
-  const metaRow = document.getElementById('meta-row');
+  const metaRow     = document.getElementById('meta-row');
   const articleType = data.article_type || data.type || 'Article';
   const toneInfo    = data.tone || {};
   const tonePrimary = typeof toneInfo === 'string' ? toneInfo : (toneInfo.primary || '');
   const toneScore   = toneInfo.confidence_score;
 
   let badgesHTML = `<span class="badge badge-type">${typeIcon(articleType)} ${articleType}</span>`;
-
   if (settings.showTone && tonePrimary) {
-    const scoreLabel = toneScore != null ? ` · ${toneScore}%` : '';
-    badgesHTML += `<span class="badge badge-tone">◐ ${tonePrimary}${scoreLabel}</span>`;
+    badgesHTML += `<span class="badge badge-tone">◐ ${tonePrimary}${toneScore != null ? ` · ${toneScore}%` : ''}</span>`;
   }
-
   if (settings.showEntities && data.entities) {
-    const { people = [], companies = [], products = [] } = data.entities;
-    people.slice(0, 2).forEach(p => {
-      const name = p.name || p;
-      badgesHTML += `<span class="badge badge-entity" title="${p.role_or_context || ''}">👤 ${name}</span>`;
+    const { people=[], companies=[], products=[] } = data.entities;
+    people.slice(0,2).forEach(p => {
+      badgesHTML += `<span class="badge badge-entity" title="${p.role_or_context||''}">👤 ${p.name||p}</span>`;
     });
-    companies.slice(0, 2).forEach(c => {
-      const name = c.name || c;
-      badgesHTML += `<span class="badge badge-entity badge-company" title="${c.industry_or_context || ''}">🏢 ${name}</span>`;
+    companies.slice(0,2).forEach(c => {
+      badgesHTML += `<span class="badge badge-entity badge-company" title="${c.industry_or_context||''}">🏢 ${c.name||c}</span>`;
     });
-    products.slice(0, 1).forEach(pr => {
-      const name = pr.name || pr;
-      badgesHTML += `<span class="badge badge-entity badge-product" title="${pr.context || ''}">📦 ${name}</span>`;
+    products.slice(0,1).forEach(pr => {
+      badgesHTML += `<span class="badge badge-entity badge-product" title="${pr.context||''}">📦 ${pr.name||pr}</span>`;
     });
   }
-
   metaRow.innerHTML = badgesHTML;
-  metaRow.querySelectorAll('.badge-entity').forEach(badge => {
-    badge.addEventListener('click', () => searchEntity(badge.textContent.slice(3).trim()));
+  metaRow.querySelectorAll('.badge-entity').forEach(b => {
+    b.addEventListener('click', () => searchEntity(b.textContent.slice(3).trim()));
   });
 
-  // Key takeaways
   const pointsList = document.getElementById('points-list');
   pointsList.innerHTML = '';
-  const points = data.key_takeaways || data.points || [];
-  points.forEach((pt, i) => {
-    const li = document.createElement('li');
+  (data.key_takeaways || data.points || []).forEach((pt, i) => {
+    const li  = document.createElement('li');
     li.className = 'point-item';
-    const numSpan = document.createElement('span');
-    numSpan.className = 'point-num';
-    numSpan.textContent = i < 9 ? `0${i+1}` : `${i+1}`;
-    const textSpan = document.createElement('span');
-    textSpan.textContent = pt;
-    li.appendChild(numSpan);
-    li.appendChild(textSpan);
+    const num = document.createElement('span');
+    num.className = 'point-num';
+    num.textContent = i < 9 ? `0${i+1}` : `${i+1}`;
+    const txt = document.createElement('span');
+    txt.textContent = pt;
+    li.appendChild(num); li.appendChild(txt);
     pointsList.appendChild(li);
     setTimeout(() => li.classList.add('visible'), i * 80 + 100);
   });
@@ -168,178 +263,102 @@ function renderResult(data, readTime) {
   }
 }
 
-// ── SHARE CARD (Canvas) ──
+// ── SHARE CARD ──
 document.getElementById('tldr-block').addEventListener('click', () => generateCard(false));
 document.getElementById('download-btn').addEventListener('click', () => generateCard(true));
 document.getElementById('share-x-btn').addEventListener('click', shareOnX);
 
 function generateCard(download = false) {
   if (!currentData) return;
-
   const canvas = document.getElementById('share-canvas');
   const ctx    = canvas.getContext('2d');
-  const W      = 800;
-  const PAD    = 32;
+  const W = 800, PAD = 32;
 
-  // ── Measure text height first to calculate dynamic canvas height ──
-  canvas.width  = W;
-  canvas.height = 600; // temp height for measuring
-
+  canvas.width = W; canvas.height = 600;
   ctx.font = '28px "Instrument Serif", Georgia, serif';
-  const wrappedLines = wrapText(ctx, currentData.tldr || '', W - PAD * 2, 28);
-  const textBlockH   = wrappedLines.length * 42;
+  const lines      = wrapText(ctx, currentData.tldr || '', W - PAD * 2);
+  const textBlockH = lines.length * 42;
+  const H          = 90 + 50 + textBlockH + 20 + 80;
+  canvas.width = W; canvas.height = H;
 
-  // Dynamic height: top bar (90) + eyebrow (50) + text + padding + bottom bar (80)
-  const H = 90 + 50 + textBlockH + 20 + 80;
-  canvas.width  = W;
-  canvas.height = H;
-
-  // ── Background ──
-  ctx.fillStyle = '#0e0e0e';
-  ctx.fillRect(0, 0, W, H);
-
-  // Random gradient
+  ctx.fillStyle = '#0e0e0e'; ctx.fillRect(0, 0, W, H);
   const gradients = [
-    { x: W - 80, y: 80,     r: 200, color: '200,240,74'  }, // lime top-right
-    { x: 80,     y: H - 80, r: 180, color: '74,200,140'  }, // teal bottom-left
-    { x: W / 2,  y: 50,     r: 220, color: '120,80,240'  }, // purple top-center
-    { x: W - 60, y: H - 60, r: 190, color: '240,160,74'  }, // amber bottom-right
-    { x: 60,     y: 60,     r: 170, color: '74,160,240'  }, // blue top-left
+    { x: W-80, y:80,    r:200, c:'200,240,74'  },
+    { x: 80,   y:H-80,  r:180, c:'74,200,140'  },
+    { x: W/2,  y:50,    r:220, c:'120,80,240'  },
+    { x: W-60, y:H-60,  r:190, c:'240,160,74'  },
+    { x: 60,   y:60,    r:170, c:'74,160,240'  },
   ];
-  const g = gradients[Math.floor(Math.random() * gradients.length)];
+  const g    = gradients[Math.floor(Math.random() * gradients.length)];
   const grad = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, g.r);
-  grad.addColorStop(0, `rgba(${g.color},0.22)`);
-  grad.addColorStop(1, `rgba(${g.color},0)`);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
+  grad.addColorStop(0, `rgba(${g.c},0.22)`); grad.addColorStop(1, `rgba(${g.c},0)`);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
 
-  // ── Logo mark ──
-  ctx.fillStyle = '#1a4a1a';
-  roundRect(ctx, PAD, 26, 36, 36, 9);
-  ctx.fill();
-  ctx.fillStyle = '#d4e8a0';
-  ctx.font = 'bold 22px Georgia, serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('C', PAD + 18, 51);
+  ctx.fillStyle = '#1a4a1a'; roundRect(ctx, PAD, 26, 36, 36, 9); ctx.fill();
+  ctx.fillStyle = '#d4e8a0'; ctx.font = 'bold 22px Georgia, serif';
+  ctx.textAlign = 'center'; ctx.fillText('C', PAD+18, 51);
+  ctx.fillStyle = '#faf9f6'; ctx.font = 'italic 600 22px "Instrument Serif", Georgia, serif';
+  ctx.textAlign = 'left'; ctx.fillText('Clarity', PAD+46, 52);
 
-  // "Clarity" — Instrument Serif italic
-  ctx.fillStyle = '#faf9f6';
-  ctx.font = 'italic 600 22px "Instrument Serif", Georgia, serif';
-  ctx.textAlign = 'left';
-  ctx.fillText('Clarity', PAD + 46, 52);
+  let domain = ''; try { domain = new URL(articleUrl).hostname.replace('www.',''); } catch(e) {}
+  ctx.fillStyle = '#555'; ctx.font = '13px monospace'; ctx.textAlign = 'right';
+  ctx.fillText(domain, W-PAD, 50);
 
-  // Source domain top-right
-  let domain = '';
-  try { domain = new URL(articleUrl).hostname.replace('www.', ''); } catch(e) {}
-  ctx.fillStyle = '#555';
-  ctx.font = '13px monospace';
-  ctx.textAlign = 'right';
-  ctx.fillText(domain, W - PAD, 50);
+  ctx.fillStyle = '#c8f04a'; ctx.font = '700 11px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('TL;DR', PAD, 90);
+  ctx.font = '28px "Instrument Serif", Georgia, serif'; ctx.fillStyle = '#f5f5f0';
+  lines.forEach((line, i) => ctx.fillText(line, PAD, 126 + i * 42));
 
-  // ── TL;DR eyebrow ──
-  const eyebrowY = 90;
-  ctx.fillStyle = '#c8f04a';
-  ctx.font = '700 11px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText('TL;DR', PAD, eyebrowY);
+  const divY = H - 64;
+  ctx.strokeStyle = '#252525'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD, divY); ctx.lineTo(W-PAD, divY); ctx.stroke();
 
-  // ── TLDR text ──
-  ctx.font = '28px "Instrument Serif", Georgia, serif';
-  ctx.fillStyle = '#f5f5f0';
-  const textStartY = eyebrowY + 36;
-  wrappedLines.forEach((line, i) => {
-    ctx.fillText(line, PAD, textStartY + i * 42);
-  });
-
-  // ── Divider ──
-  const dividerY = H - 64;
-  ctx.strokeStyle = '#252525';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(PAD, dividerY);
-  ctx.lineTo(W - PAD, dividerY);
-  ctx.stroke();
-
-  // ── Bottom bar ──
   const toneInfo    = currentData.tone || {};
   const tonePrimary = typeof toneInfo === 'string' ? toneInfo : (toneInfo.primary || '');
   const toneScore   = toneInfo.confidence_score;
   const articleType = currentData.article_type || currentData.type || '';
-
-  ctx.fillStyle = '#666';
-  ctx.font = '13px monospace';
-  ctx.textAlign = 'left';
-  let bottomLeft = '';
-  if (tonePrimary) bottomLeft += `◐ ${tonePrimary}`;
-  if (toneScore != null) bottomLeft += `  ·  ${toneScore}%`;
-  if (articleType) bottomLeft += `   ${articleType}`;
-  ctx.fillText(bottomLeft, PAD, dividerY + 28);
-
-  // Branding bottom-right
-  ctx.fillStyle = '#444';
-  ctx.font = '12px monospace';
-  ctx.textAlign = 'right';
-  ctx.fillText('Summarized with Clarity', W - PAD, dividerY + 28);
+  ctx.fillStyle = '#666'; ctx.font = '13px monospace'; ctx.textAlign = 'left';
+  let bl = '';
+  if (tonePrimary) bl += `◐ ${tonePrimary}`;
+  if (toneScore != null) bl += `  ·  ${toneScore}%`;
+  if (articleType) bl += `   ${articleType}`;
+  ctx.fillText(bl, PAD, divY+28);
+  ctx.fillStyle = '#444'; ctx.font = '12px monospace'; ctx.textAlign = 'right';
+  ctx.fillText('Summarized with Clarity', W-PAD, divY+28);
 
   if (download) {
-    const link = document.createElement('a');
-    link.download = 'clarity-summary.png';
-    link.href = canvas.toDataURL('image/png');
-    link.click();
+    const a = document.createElement('a');
+    a.download = 'clarity-summary.png'; a.href = canvas.toDataURL('image/png'); a.click();
   }
-
   return canvas.toDataURL('image/png');
 }
 
 function shareOnX() {
   if (!currentData) return;
-
-  // 1. Generate + auto-download the card
   generateCard(true);
-
-  // 2. Show toast
   showToast('🖼 Card downloaded! Attach it to your tweet 👇');
-
-  // 3. Open X with pre-filled tweet (short, clean)
-  const tags  = (currentData.tags || []).slice(0, 3).map(t => t.startsWith('#') ? t : `#${t}`).join(' ');
-  const tweet = `${currentData.tldr || ''}\n\n${tags}\n\nSummarized with Clarity 🧠`;
-  setTimeout(() => {
-    chrome.tabs.create({ url: `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweet)}` });
-  }, 800);
-}
-
-function showToast(msg) {
-  const toast = document.getElementById('success-toast');
-  toast.textContent = msg;
-  toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 3500);
+  const tags  = (currentData.tags || []).slice(0,3).map(t => t.startsWith('#') ? t : `#${t}`).join(' ');
+  const tweet = `${currentData.tldr||''}\n\n${tags}\n\nSummarized with Clarity 🧠`;
+  setTimeout(() => chrome.tabs.create({ url: `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweet)}` }), 800);
 }
 
 // ── ASK ──
 document.getElementById('ask-btn').addEventListener('click', async () => {
   const question = document.getElementById('ask-input').value.trim();
   if (!question || !articleText) return;
-
   const askBtn  = document.getElementById('ask-btn');
   const askResp = document.getElementById('ask-response');
-  askBtn.disabled = true;
-  askBtn.textContent = '...';
-  askResp.style.display = 'none';
-
+  askBtn.disabled = true; askBtn.textContent = '...'; askResp.style.display = 'none';
   try {
     const answer = await callAI(
-      `Article title: "${articleTitle}"\n\nArticle content:\n${articleText.slice(0, 6000)}\n\nUser question: ${question}`,
-      `You are Clarity, a reading assistant. Answer the user's question based ONLY on the article provided. Be concise and direct. Do not invent information not present in the article.`
+      `Article title: "${articleTitle}"\n\nArticle content:\n${articleText.slice(0,6000)}\n\nUser question: ${question}`,
+      `You are Clarity, a reading assistant. Answer the user's question based ONLY on the article provided. Be concise and direct.`
     );
-    askResp.textContent = answer;
-    askResp.style.display = 'block';
-  } catch (err) {
-    askResp.textContent = 'Could not get an answer. Try again.';
-    askResp.style.display = 'block';
+    askResp.textContent = answer; askResp.style.display = 'block';
+  } catch(err) {
+    askResp.textContent = 'Could not get an answer. Try again.'; askResp.style.display = 'block';
   }
-
-  askBtn.disabled = false;
-  askBtn.textContent = 'Ask';
+  askBtn.disabled = false; askBtn.textContent = 'Ask';
 });
 
 // ── HISTORY ──
@@ -347,15 +366,10 @@ function saveToHistory(data) {
   chrome.storage.local.get(['clarityHistory'], (res) => {
     const history = res.clarityHistory || [];
     const entry = {
-      title:        articleTitle,
-      url:          articleUrl,
-      tldr:         data.tldr,
-      type:         data.article_type || data.type || '',
-      tone:         data.tone || {},
-      tags:         data.tags || [],
-      key_takeaways: data.key_takeaways || [],
-      entities:     data.entities || {},
-      date:         Date.now()
+      title: articleTitle, url: articleUrl, tldr: data.tldr,
+      type: data.article_type || data.type || '', tone: data.tone || {},
+      tags: data.tags || [], key_takeaways: data.key_takeaways || [],
+      entities: data.entities || {}, date: Date.now()
     };
     const filtered = history.filter(h => h.url !== articleUrl);
     filtered.unshift(entry);
@@ -367,156 +381,94 @@ function renderHistory() {
   const listEl = document.getElementById('history-list');
   chrome.storage.local.get(['clarityHistory'], (res) => {
     const history = res.clarityHistory || [];
-
     if (history.length === 0) {
       listEl.innerHTML = '<div class="history-empty">No summaries yet.<br/>Summarize an article to see it here.</div>';
       return;
     }
-
     listEl.innerHTML = '';
     history.forEach(item => {
       const div = document.createElement('div');
       div.className = 'history-item';
-
       const title = document.createElement('div');
-      title.className = 'history-item-title';
-      title.textContent = item.title || 'Untitled';
-
+      title.className = 'history-item-title'; title.textContent = item.title || 'Untitled';
       const tldr = document.createElement('div');
-      tldr.className = 'history-item-tldr';
-      tldr.textContent = item.tldr || '';
-
+      tldr.className = 'history-item-tldr'; tldr.textContent = item.tldr || '';
       const meta = document.createElement('div');
       meta.className = 'history-item-meta';
-
       const date = document.createElement('span');
-      date.className = 'history-item-date';
-      date.textContent = formatDate(item.date);
-
+      date.className = 'history-item-date'; date.textContent = formatDate(item.date);
       const type = document.createElement('span');
       type.className = 'history-item-date';
       type.textContent = item.type ? `${typeIcon(item.type)} ${item.type}` : '';
-
-      meta.appendChild(date);
-      meta.appendChild(type);
-
-      div.appendChild(title);
-      div.appendChild(tldr);
-      div.appendChild(meta);
-
-      // Click → load full summary in popup, don't open tab
+      meta.appendChild(date); meta.appendChild(type);
+      div.appendChild(title); div.appendChild(tldr); div.appendChild(meta);
       div.addEventListener('click', () => {
-        // Restore state so share card works
-        articleTitle = item.title;
-        articleUrl   = item.url;
-        currentData  = item;
-
-        // Render result in popup
-        renderResult(item, null);
-        showState('result');
+        articleTitle = item.title; articleUrl = item.url; currentData = item;
+        renderResult(item, null); showState('result');
         historyPanel.style.display = 'none';
-
-        // Hide reading time if not available from history
-        document.getElementById('reading-time-label').textContent = '';
-
-        // Add a subtle "← back" link in footer showing this is from history
-        const redoBtn = document.getElementById('redo-btn');
-        redoBtn.innerHTML = `
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-          </svg>
-          Re-summarize`;
-
-        // Show a small link to open original article
         document.getElementById('reading-time-label').innerHTML =
           `<a href="#" id="open-article-link" style="color:var(--muted);font-size:10px;text-decoration:none;font-family:'DM Mono',monospace;">↗ open article</a>`;
         setTimeout(() => {
           const link = document.getElementById('open-article-link');
-          if (link) link.addEventListener('click', (e) => {
-            e.preventDefault();
-            chrome.tabs.create({ url: item.url });
-          });
+          if (link) link.addEventListener('click', e => { e.preventDefault(); chrome.tabs.create({ url: item.url }); });
         }, 50);
       });
-
       listEl.appendChild(div);
     });
   });
 }
 
 function formatDate(ts) {
-  const d = new Date(ts);
-  const now = new Date();
+  const d = new Date(ts), now = new Date();
   const diff = Math.floor((now - d) / 60000);
-  if (diff < 1)   return 'just now';
-  if (diff < 60)  return `${diff}m ago`;
+  if (diff < 1) return 'just now';
+  if (diff < 60) return `${diff}m ago`;
   if (diff < 1440) return `${Math.floor(diff/60)}h ago`;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
 }
 
-// ── AI CALL ──
+// ── AI CALL — MULTI-PROVIDER ──
 async function callAI(userPrompt, systemOverride = null) {
-  const apiKey = settings.apiKey;
-  if (!apiKey) throw new Error('No API key set. Open settings (⚙) to add your OpenAI API key.');
+  const provider = settings.provider || 'openai';
+  const model    = settings.model    || PROVIDERS[provider].defaultModel;
+  const apiKey   = settings.apiKey;
+
+  if (!apiKey) throw new Error(`No API key. Open settings ⚙ and add your ${PROVIDERS[provider].name} key.`);
 
   const systemPrompt = systemOverride || `You are Clarity, an elite reading assistant embedded inside a Chrome extension.
 Your task is to analyze the provided webpage article content and return a structured JSON response.
 Follow these rules strictly:
 1. Do NOT add commentary outside JSON.
 2. Do NOT include markdown or code fences.
-3. Do NOT invent information.
-4. Only use information present in the provided text.
-5. Be concise, precise, and neutral.
-6. Output must be valid JSON.
+3. Do NOT invent information not in the article.
+4. Be concise, precise, and neutral.
+5. Output must be valid JSON only.
 
-Return the result in the following structure:
+Return exactly this JSON structure:
 {
-  "tldr": "One sharp, highly condensed sentence (max 25 words) capturing the core message.",
-  "key_takeaways": [
-    "Bullet point 1 (clear and specific)",
-    "Bullet point 2",
-    "Bullet point 3",
-    "Bullet point 4",
-    "Bullet point 5"
-  ],
+  "tldr": "One sharp, condensed sentence (max 25 words) capturing the core message.",
+  "key_takeaways": ["point 1","point 2","point 3","point 4","point 5"],
   "article_type": "News | Opinion | Research | Blog | Tutorial | Interview | Report | Review | Analysis | Other",
-  "tone": {
-    "primary": "Neutral | Critical | Optimistic | Pessimistic | Informative | Persuasive | Analytical | Emotional",
-    "confidence_score": 0
-  },
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "tone": { "primary": "Neutral | Critical | Optimistic | Pessimistic | Informative | Persuasive | Analytical | Emotional", "confidence_score": 0 },
+  "tags": ["tag1","tag2","tag3","tag4","tag5"],
   "entities": {
-    "people": [{ "name": "Full Name", "role_or_context": "Short description of who they are in this article" }],
-    "companies": [{ "name": "Company Name", "industry_or_context": "Short description based only on article" }],
-    "products": [{ "name": "Product Name", "context": "Short description based only on article" }]
+    "people":    [{ "name": "Full Name", "role_or_context": "who they are" }],
+    "companies": [{ "name": "Company",   "industry_or_context": "context" }],
+    "products":  [{ "name": "Product",   "context": "context" }]
   }
 }
-For tags: extract 4-6 short, relevant topic keywords from the article (e.g. "AI", "India", "OpenAI"). No hashtag symbol needed.
-If an entity category has no entries, return an empty array.`;
+Tags: 4-6 short topic keywords, no hashtag symbol. Empty array if no entities.`;
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      max_tokens: 1200,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user',   content: userPrompt }
-      ]
-    })
-  });
+  const p   = PROVIDERS[provider];
+  const req = p.buildRequest(apiKey, model, systemPrompt, userPrompt);
+  const res = await fetch(req.url, { method:'POST', headers: req.headers, body: JSON.stringify(req.body) });
 
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error?.message || `API Error ${res.status}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || err.message || `API Error ${res.status}`);
   }
 
-  const data = await res.json();
-  return data.choices[0].message.content;
+  return p.parseResponse(await res.json());
 }
 
 // ── UTILS ──
@@ -525,50 +477,39 @@ function showState(state) {
   loadingState.style.display = state === 'loading' ? 'block' : 'none';
   resultState.style.display  = state === 'result'  ? 'block' : 'none';
 }
-
 function showError(msg) {
   document.getElementById('error-msg').textContent = msg;
   errorToast.style.display = 'flex';
 }
-
 function hideError() { errorToast.style.display = 'none'; }
-
+function showToast(msg) {
+  const t = document.getElementById('success-toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
 function typeIcon(type) {
   const icons = { News:'📰', Opinion:'💬', Research:'🔬', Tutorial:'📖', Analysis:'📊', Marketing:'📣', Interview:'🎙', Blog:'✍️', Report:'📋', Review:'⭐', Other:'📄' };
   return icons[type] || '📄';
 }
-
 function searchEntity(name) {
   chrome.tabs.create({ url: `https://www.google.com/search?q=${encodeURIComponent(name)}` });
 }
-
-function wrapText(ctx, text, maxWidth, fontSize) {
-  const words = text.split(' ');
-  const lines = [];
-  let current = '';
-  for (const word of words) {
-    const test = current ? `${current} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = test;
-    }
+function wrapText(ctx, text, maxWidth) {
+  const words = text.split(' '), lines = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(test).width > maxWidth && cur) { lines.push(cur); cur = w; }
+    else cur = test;
   }
-  if (current) lines.push(current);
+  if (cur) lines.push(cur);
   return lines;
 }
-
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
   ctx.closePath();
 }
