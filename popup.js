@@ -208,13 +208,7 @@ function renderResult(data, readTime) {
 
   const tagsRow = document.getElementById('tags-row');
   tagsRow.innerHTML = '';
-  (data.tags || []).forEach(tag => {
-    const chip = document.createElement('span');
-    chip.className = 'tag-chip';
-    chip.textContent = tag.startsWith('#') ? tag : `#${tag}`;
-    chip.addEventListener('click', () => searchEntity(tag.replace('#', '')));
-    tagsRow.appendChild(chip);
-  });
+  // tags row hidden — keeping only badges below
 
   const metaRow     = document.getElementById('meta-row');
   const articleType = data.article_type || data.type || 'Article';
@@ -274,13 +268,17 @@ function generateCard(download = false) {
   const ctx    = canvas.getContext('2d');
   const W = 800, PAD = 32;
 
+  // Measure wrapped lines first
   canvas.width = W; canvas.height = 600;
   ctx.font = '28px "Instrument Serif", Georgia, serif';
   const lines      = wrapText(ctx, currentData.tldr || '', W - PAD * 2);
   const textBlockH = lines.length * 42;
-  const H          = 90 + 50 + textBlockH + 20 + 80;
+
+  // Tight height: topbar(72) + gap(16) + eyebrow(20) + text + gap(16) + divider(1) + footer(44)
+  const H = 72 + 16 + 20 + textBlockH + 16 + 1 + 44;
   canvas.width = W; canvas.height = H;
 
+  // Background
   ctx.fillStyle = '#0e0e0e'; ctx.fillRect(0, 0, W, H);
   const gradients = [
     { x: W-80, y:80,    r:200, c:'200,240,74'  },
@@ -294,25 +292,44 @@ function generateCard(download = false) {
   grad.addColorStop(0, `rgba(${g.c},0.22)`); grad.addColorStop(1, `rgba(${g.c},0)`);
   ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
 
-  ctx.fillStyle = '#1a4a1a'; roundRect(ctx, PAD, 26, 36, 36, 9); ctx.fill();
-  ctx.fillStyle = '#d4e8a0'; ctx.font = 'bold 22px Georgia, serif';
-  ctx.textAlign = 'center'; ctx.fillText('C', PAD+18, 51);
-  ctx.fillStyle = '#faf9f6'; ctx.font = 'italic 600 22px "Instrument Serif", Georgia, serif';
-  ctx.textAlign = 'left'; ctx.fillText('Clarity', PAD+46, 52);
+  // Logo mark box
+  ctx.fillStyle = '#1a4a1a';
+  roundRect(ctx, PAD, 18, 36, 36, 9); ctx.fill();
 
+  // "C" in logo — Instrument Serif
+  ctx.fillStyle = '#d4e8a0';
+  ctx.font = 'italic 22px "Instrument Serif", Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('C', PAD + 18, 43);
+
+  // "Clarity" wordmark — Instrument Serif italic
+  ctx.fillStyle = '#faf9f6';
+  ctx.font = 'italic 22px "Instrument Serif", Georgia, serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('Clarity', PAD + 46, 44);
+
+  // Domain top-right
   let domain = ''; try { domain = new URL(articleUrl).hostname.replace('www.',''); } catch(e) {}
   ctx.fillStyle = '#555'; ctx.font = '13px monospace'; ctx.textAlign = 'right';
-  ctx.fillText(domain, W-PAD, 50);
+  ctx.fillText(domain, W - PAD, 42);
 
+  // TL;DR eyebrow
+  const eyebrowY = 72 + 16 + 14;
   ctx.fillStyle = '#c8f04a'; ctx.font = '700 11px monospace'; ctx.textAlign = 'left';
-  ctx.fillText('TL;DR', PAD, 90);
+  ctx.fillText('TL;DR', PAD, eyebrowY);
+
+  // TLDR text — tight right under eyebrow
+  const textY = eyebrowY + 30;
   ctx.font = '28px "Instrument Serif", Georgia, serif'; ctx.fillStyle = '#f5f5f0';
-  lines.forEach((line, i) => ctx.fillText(line, PAD, 126 + i * 42));
+  lines.forEach((line, i) => ctx.fillText(line, PAD, textY + i * 42));
 
-  const divY = H - 64;
+  // Divider — sits exactly at end of text + 16px gap
+  const divY = textY + textBlockH - 12 + 16;
   ctx.strokeStyle = '#252525'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(PAD, divY); ctx.lineTo(W-PAD, divY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PAD, divY); ctx.lineTo(W - PAD, divY); ctx.stroke();
 
+  // Footer
+  const footerY = divY + 28;
   const toneInfo    = currentData.tone || {};
   const tonePrimary = typeof toneInfo === 'string' ? toneInfo : (toneInfo.primary || '');
   const toneScore   = toneInfo.confidence_score;
@@ -322,9 +339,9 @@ function generateCard(download = false) {
   if (tonePrimary) bl += `◐ ${tonePrimary}`;
   if (toneScore != null) bl += `  ·  ${toneScore}%`;
   if (articleType) bl += `   ${articleType}`;
-  ctx.fillText(bl, PAD, divY+28);
+  ctx.fillText(bl, PAD, footerY);
   ctx.fillStyle = '#444'; ctx.font = '12px monospace'; ctx.textAlign = 'right';
-  ctx.fillText('Summarized with Clarity', W-PAD, divY+28);
+  ctx.fillText('Summarized with Clarity', W - PAD, footerY);
 
   if (download) {
     const a = document.createElement('a');
@@ -337,9 +354,8 @@ function shareOnX() {
   if (!currentData) return;
   generateCard(true);
   showToast('🖼 Card downloaded! Attach it to your tweet 👇');
-  const tags  = (currentData.tags || []).slice(0,3).map(t => t.startsWith('#') ? t : `#${t}`).join(' ');
-  const tweet = `${currentData.tldr||''}\n\n${tags}\n\nSummarized with Clarity 🧠`;
-  setTimeout(() => chrome.tabs.create({ url: `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweet)}` }), 800);
+  // Open blank X compose — no pre-filled text, just let user attach the image
+  setTimeout(() => chrome.tabs.create({ url: 'https://twitter.com/intent/tweet' }), 800);
 }
 
 // ── ASK ──
