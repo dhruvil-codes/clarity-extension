@@ -18,7 +18,7 @@ No Web Store. No $5 fee. Load it directly into Chrome.
 
 **1. Clone or download this repo**
 ```bash
-git clone https://github.com/YOURUSERNAME/clarity-extension.git
+git clone https://github.com/dhruvil-codes/clarity-extension.git
 ```
 Or click **Code → Download ZIP** and unzip it.
 
