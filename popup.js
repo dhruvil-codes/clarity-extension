@@ -180,7 +180,16 @@ async function summarize() {
   hideError();
   showState('loading');
   try {
-    const [tab]  = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    // Inject content.js if not already present
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js']
+      });
+    } catch(e) { /* already injected — ignore */ }
+
     const resp   = await chrome.tabs.sendMessage(tab.id, { action: 'getPageText' });
     articleText  = resp.text;
     articleTitle = resp.title;
@@ -189,8 +198,19 @@ async function summarize() {
     const readTime   = Math.ceil(articleText.split(' ').length / 200);
     const userPrompt = `Article title: ${articleTitle}\n\nArticle content:\n${articleText.slice(0, 8000)}`;
     const rawJson    = await callAI(userPrompt);
-    const cleaned    = rawJson.trim().replace(/^```json|^```|```$/gm, '').trim();
-    const data       = JSON.parse(cleaned);
+    // Robust JSON extraction — handles markdown fences, extra text, trailing commas
+    let cleaned = rawJson.trim();
+    // Strip markdown code fences
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/,'').trim();
+    // Extract just the JSON object if there's surrounding text
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace  = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+    }
+    // Fix trailing commas before } or ] (common model mistake)
+    cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
+    const data = JSON.parse(cleaned);
     currentData      = data;
 
     renderResult(data, readTime);
@@ -258,12 +278,27 @@ function renderResult(data, readTime) {
 }
 
 // ── SHARE CARD ──
-document.getElementById('tldr-block').addEventListener('click', () => generateCard(false));
-document.getElementById('download-btn').addEventListener('click', () => generateCard(true));
+document.getElementById('tldr-block').addEventListener('click', async () => generateCard(false));
+document.getElementById('download-btn').addEventListener('click', async () => generateCard(true));
 document.getElementById('share-x-btn').addEventListener('click', shareOnX);
 
-function generateCard(download = false) {
+async function generateCard(download = false) {
   if (!currentData) return;
+
+  // Load Instrument Serif italic via CSS API (most reliable URL)
+  if (!document.fonts.check('italic 24px "Instrument Serif"')) {
+    try {
+      const font = new FontFace(
+        'Instrument Serif',
+        `url(https://fonts.gstatic.com/s/instrumentserif/v1/Qw3TZQpMCyTtJSvBtNoorS1XkU_x2g.woff2)`,
+        { style: 'italic', weight: '400' }
+      );
+      const loaded = await font.load();
+      document.fonts.add(loaded);
+    } catch(e) { /* fallback */ }
+  }
+  await document.fonts.ready;
+
   const canvas = document.getElementById('share-canvas');
   const ctx    = canvas.getContext('2d');
   const W = 800, PAD = 32;
@@ -296,15 +331,15 @@ function generateCard(download = false) {
   ctx.fillStyle = '#1a4a1a';
   roundRect(ctx, PAD, 18, 36, 36, 9); ctx.fill();
 
-  // "C" in logo — Instrument Serif
+  // "C" inside box — same font as wordmark
   ctx.fillStyle = '#d4e8a0';
-  ctx.font = 'italic 22px "Instrument Serif", Georgia, serif';
+  ctx.font = 'italic 24px "Instrument Serif", Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('C', PAD + 18, 43);
+  ctx.fillText('C', PAD + 18, 44);
 
-  // "Clarity" wordmark — Instrument Serif italic
+  // "Clarity" wordmark
   ctx.fillStyle = '#faf9f6';
-  ctx.font = 'italic 22px "Instrument Serif", Georgia, serif';
+  ctx.font = 'italic 24px "Instrument Serif", Georgia, serif';
   ctx.textAlign = 'left';
   ctx.fillText('Clarity', PAD + 46, 44);
 
@@ -350,12 +385,27 @@ function generateCard(download = false) {
   return canvas.toDataURL('image/png');
 }
 
-function shareOnX() {
+async function shareOnX() {
   if (!currentData) return;
-  generateCard(true);
-  showToast('🖼 Card downloaded! Attach it to your tweet 👇');
-  // Open blank X compose — no pre-filled text, just let user attach the image
-  setTimeout(() => chrome.tabs.create({ url: 'https://twitter.com/intent/tweet' }), 800);
+
+  const dataUrl = await generateCard(false); // render only, no download
+
+  try {
+    // Convert canvas dataURL to blob and copy to clipboard
+    const res   = await fetch(dataUrl);
+    const blob  = await res.blob();
+    await navigator.clipboard.write([
+      new ClipboardItem({ 'image/png': blob })
+    ]);
+    showToast('🖼 Image copied! Open X and paste it (Ctrl+V)');
+  } catch(e) {
+    // Clipboard API failed — fall back to download
+    generateCard(true);
+    showToast('🖼 Card downloaded! Attach it to your tweet manually');
+  }
+
+  // Open blank X compose
+  setTimeout(() => chrome.tabs.create({ url: 'https://twitter.com/intent/tweet' }), 600);
 }
 
 // ── ASK ──

@@ -3,7 +3,7 @@
   "name": "Clarity – Smart Article Summarizer",
   "version": "1.0.0",
   "description": "Instantly summarize any article with AI. Get TLDR, key points, tone analysis & follow-up Q&A.",
-  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "clipboardWrite"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html",
